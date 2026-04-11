@@ -47,6 +47,14 @@ enum Commands {
     Delete {
         task_id: String,
     },
+    /// Add a context (swimlane)
+    AddContext {
+        name: String,
+    },
+    /// Add a column (status)
+    AddColumn {
+        name: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -163,6 +171,40 @@ fn main() -> Result<()> {
 
             storage.save(&data)?;
             println!("Task deleted successfully.");
+        }
+        Commands::AddContext { name } => {
+            let id = name.to_lowercase().trim().replace(' ', "-");
+            if data.contexts.iter().any(|c| c.id == id) {
+                bail!("Context with ID '{}' already exists.", id);
+            }
+
+            let context = models::Context {
+                id: id.clone(),
+                name,
+                position: data.contexts.len() as i32 + 1,
+            };
+
+            println!("Adding context: {}", context.name);
+            data.contexts.push(context);
+            storage.save(&data)?;
+            println!("Context '{}' added successfully.", id);
+        }
+        Commands::AddColumn { name } => {
+            let id = name.to_lowercase().trim().replace(' ', "-");
+            if data.columns.iter().any(|c| c.id == id) {
+                bail!("Column with ID '{}' already exists.", id);
+            }
+
+            let column = models::Column {
+                id: id.clone(),
+                name,
+                position: data.columns.len() as i32 + 1,
+            };
+
+            println!("Adding column: {}", column.name);
+            data.columns.push(column);
+            storage.save(&data)?;
+            println!("Column '{}' added successfully.", id);
         }
     }
 
