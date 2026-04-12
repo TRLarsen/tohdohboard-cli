@@ -16,6 +16,17 @@ cargo install --path .
 
 *Make sure your cargo bin directory (usually `~/.cargo/bin`) is in your `$PATH`.*
 
+## Tailnet / Remote Usage
+
+By default, the CLI looks for data in `~/.tohdohboard/data.json`. To use it from any machine on your Tailnet, point it to your backend server's API:
+
+```bash
+export TOHDOH_URL="http://<your-server-ip>:3001/api/data"
+tohdoh list
+```
+
+Add this export to your `.bashrc` or `.zshrc` to make it permanent.
+
 ## Building and Running Locally
 
 ```bash
