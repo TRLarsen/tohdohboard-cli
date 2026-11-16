@@ -72,6 +72,7 @@ mod tests {
             context_id: "work".into(),
             created_at: String::new(),
             updated_at: String::new(),
+            due_date: None,
             extra: Default::default(),
         }
     }

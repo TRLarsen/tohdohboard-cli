@@ -444,6 +444,7 @@ mod tests {
             context_id: "work".into(),
             created_at: now(),
             updated_at: "2026-01-01T00:00:00.000Z".into(),
+            due_date: None,
             extra: Default::default(),
         }
     }

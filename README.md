@@ -61,6 +61,9 @@ Contexts and columns are referred to by their **id** (e.g. `work`, `todo`), not 
   (`--status` defaults to `todo`; the description is optional)
 * **List tasks**:
   `tohdoh list` (optionally `--context work` and/or `--status todo`)
+* **Due dates**:
+  `tohdoh add "Title" --context work --due 2026-12-01` or `tohdoh due <TASK_ID_PREFIX> 2026-12-01` (`none` clears it).
+  Dates you type must be `YYYY-MM-DD` (a real calendar date). `list` shows the date in a `Due` column. The date is stored as `dueDate` for other clients (for example the server's calendar feed); a `dueDate` already on a task is passed through untouched.
 * **Move a task**:
   `tohdoh move <TASK_ID_PREFIX> --status done --context projects`
 * **Delete a task**:

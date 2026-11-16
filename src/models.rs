@@ -66,6 +66,10 @@ pub struct Task {
     /// When the task was last changed, as stored; the CLI writes RFC 3339 UTC.
     /// Serialized as `updatedAt`.
     pub updated_at: String,
+    /// Optional due date, passed through exactly as stored (the CLI writes
+    /// `YYYY-MM-DD`). Serialized as `dueDate`; omitted when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_date: Option<String>,
     /// Fields this version does not know about, kept verbatim.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -176,6 +180,19 @@ mod tests {
         assert_eq!(board.contexts[0].extra["color"], "#fff");
         assert_eq!(board.columns[0].extra["wip"], 5);
         assert_eq!(serde_json::to_value(&board).unwrap(), original);
+    }
+
+    #[test]
+    fn due_date_is_passed_through_and_omitted_when_unset() {
+        let mut doc = sample();
+        doc["tasks"][0]["dueDate"] = json!("next tuesday");
+        let board: TohdohBoardData = serde_json::from_value(doc.clone()).unwrap();
+        assert_eq!(board.tasks[0].due_date.as_deref(), Some("next tuesday"));
+        assert_eq!(serde_json::to_value(&board).unwrap(), doc);
+
+        let board: TohdohBoardData = serde_json::from_value(sample()).unwrap();
+        assert!(board.tasks[0].due_date.is_none());
+        assert!(!serde_json::to_value(&board).unwrap()["tasks"][0].as_object().unwrap().contains_key("dueDate"));
     }
 
     #[test]
