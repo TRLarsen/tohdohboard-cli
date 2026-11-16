@@ -10,9 +10,11 @@
 //! * **Local file** (default): `~/.tohdohboard/data.json`. It is created with a
 //!   default board (contexts `work`, `school`, `projects`; columns `todo`,
 //!   `doing`, `done`) on first use.
+//!   Archived tasks go to `archive.json` in the same directory.
 //! * **Remote server**: set `TOHDOH_URL` to the backend's `/api/data` URL and
-//!   every command reads and writes the board over HTTP instead; the local file
-//!   is not used.
+//!   every command reads and writes the board over HTTP instead (archive
+//!   commands use the server's `/api/archive` endpoints, derived from that URL);
+//!   the local files are not used.
 //!
 //! See [`storage`] for details.
 //!
@@ -29,6 +31,9 @@
 //! tohdoh list --context work
 //! tohdoh move 1a2b3c4d --status doing
 //! tohdoh delete 1a2b3c4d
+//! tohdoh archive done                  # archive everything in the done column
+//! tohdoh archive list
+//! tohdoh archive restore 1a2b3c4d
 //! tohdoh add-context "Side Projects"   # id: side-projects
 //! tohdoh add-column "In Review"        # id: in-review
 //! ```
@@ -38,21 +43,26 @@
 //! # Code layout
 //!
 //! * [`models`]: the serde types of the board document.
-//! * [`storage`]: loading and saving it (local file or remote server).
+//! * [`storage`]: loading and saving it, plus the archive (local files or
+//!   remote server).
+//! * [`resolve`]: turning an id prefix into exactly one task.
+//! * [`archive`]: the `tohdoh archive` command group.
 //! * this module: the [`clap`] command-line definition and the command
 //!   implementations, all in [`main`].
 
 #![warn(missing_docs)]
 
+mod archive;
 mod models;
+mod resolve;
 mod storage;
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
-use models::Task;
+use models::{Task, now, position_of, short_time};
+use resolve::resolve_prefix;
 use storage::Storage;
 use uuid::Uuid;
-use chrono::Utc;
 use comfy_table::{Table, Color, Cell, Attribute};
 
 /// Command-line interface of `tohdoh`.
@@ -110,8 +120,8 @@ enum Commands {
     ///
     /// Change the status and/or context of a task.
     ///
-    /// TASK_ID is matched as a prefix of the full UUID; only the first matching
-    /// task in the board is changed, even if the prefix matches several. With
+    /// TASK_ID is matched as a case-insensitive prefix of the full id and must identify exactly
+    /// one task (an empty or ambiguous prefix is an error). With
     /// neither `--status` nor `--context` the task is left as is, except that its
     /// updated time is refreshed.
     Move {
@@ -126,13 +136,12 @@ enum Commands {
     },
     /// Delete a task
     ///
-    /// Delete task(s) whose id starts with TASK_ID.
+    /// Delete the task whose id starts with TASK_ID.
     ///
-    /// Every task whose UUID starts with TASK_ID is removed, not just the first;
-    /// use a long enough prefix to be unambiguous. An empty TASK_ID matches (and
-    /// deletes) every task.
+    /// TASK_ID must identify exactly one task: an empty prefix, or one matching
+    /// several tasks, is an error that lists the candidates.
     Delete {
-        /// Task id, or the beginning of it; ALL tasks with this prefix are deleted
+        /// Task id, or the beginning of it (the first 8 characters shown by `list` suffice)
         task_id: String,
     },
     /// Add a context (swimlane)
@@ -154,6 +163,16 @@ enum Commands {
     AddColumn {
         /// Display name; the id is derived from it
         name: String,
+    },
+    /// Archive finished tasks, list or restore archived ones
+    ///
+    /// Archived tasks are kept out of the board but not deleted. Old done tasks
+    /// are archived automatically by the server (see its config.toml); these
+    /// commands archive on demand.
+    Archive {
+        /// What to do with the archive
+        #[command(subcommand)]
+        command: archive::ArchiveCommand,
     },
 }
 
@@ -184,19 +203,20 @@ fn main() -> Result<()> {
             }
 
             let task = Task {
-                id: Uuid::new_v4(),
+                id: Uuid::new_v4().to_string(),
                 title,
                 description: description.unwrap_or_default(),
                 status,
                 context_id: context.clone(),
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
+                created_at: now(),
+                updated_at: now(),
+                extra: Default::default(),
             };
-            
-            println!("Adding task: {}", task.title);
+
+            let title = task.title.clone();
             data.tasks.push(task);
             storage.save(&data)?;
-            println!("Task added successfully.");
+            println!("Added task: {title}");
         }
         Commands::List { context, status } => {
             let mut table = Table::new();
@@ -212,75 +232,58 @@ fn main() -> Result<()> {
             let mut sorted_tasks = data.tasks.clone();
             
             sorted_tasks.sort_by(|a, b| {
-                let ctx_a = data.contexts.iter().find(|c| c.id == a.context_id).map(|c| c.position).unwrap_or(0);
-                let ctx_b = data.contexts.iter().find(|c| c.id == b.context_id).map(|c| c.position).unwrap_or(0);
-                
-                if ctx_a != ctx_b {
-                    return ctx_a.cmp(&ctx_b);
-                }
-                
-                let col_a = data.columns.iter().find(|c| c.id == a.status).map(|c| c.position).unwrap_or(0);
-                let col_b = data.columns.iter().find(|c| c.id == b.status).map(|c| c.position).unwrap_or(0);
-                
-                col_a.cmp(&col_b)
+                let ctx = |t: &Task| data.contexts.iter().find(|c| c.id == t.context_id).map_or(0.0, |c| position_of(&c.position));
+                let col = |t: &Task| data.columns.iter().find(|c| c.id == t.status).map_or(0.0, |c| position_of(&c.position));
+
+                ctx(a).total_cmp(&ctx(b)).then(col(a).total_cmp(&col(b)))
             });
 
             let filtered_tasks = sorted_tasks.iter().filter(|t| {
-                let context_match = context.as_ref().map_or(true, |c| &t.context_id == c);
-                let status_match = status.as_ref().map_or(true, |s| &t.status == s);
+                let context_match = context.as_ref().is_none_or(|c| &t.context_id == c);
+                let status_match = status.as_ref().is_none_or(|s| &t.status == s);
                 context_match && status_match
             });
 
             for task in filtered_tasks {
-                let short_id = task.id.to_string().chars().take(8).collect::<String>();
+                let short_id = task.id.chars().take(8).collect::<String>();
                 table.add_row(vec![
                     short_id,
                     task.title.clone(),
                     task.context_id.clone(),
                     task.status.clone(),
-                    task.updated_at.format("%Y-%m-%d %H:%M").to_string(),
+                    short_time(&task.updated_at),
                 ]);
             }
 
             println!("{}", table);
         }
         Commands::Move { task_id, status, context } => {
-            let mut found = false;
-            for task in data.tasks.iter_mut() {
-                if task.id.to_string().starts_with(&task_id) {
-                    if let Some(s) = status.clone() {
-                        if !data.columns.iter().any(|cx| cx.id == s) {
-                            bail!("Column '{}' does not exist.", s);
-                        }
-                        task.status = s;
-                    }
-                    if let Some(c) = context.clone() {
-                        if !data.contexts.iter().any(|cx| cx.id == c) {
-                            bail!("Context '{}' does not exist.", c);
-                        }
-                        task.context_id = c;
-                    }
-                    task.updated_at = Utc::now();
-                    found = true;
-                    println!("Moved task '{}'", task.title);
-                    break;
-                }
+            let id = resolve_prefix(&data.tasks, &task_id)?;
+            if let Some(s) = &status
+                && !data.columns.iter().any(|c| &c.id == s)
+            {
+                bail!("Column '{}' does not exist.", s);
             }
-
-            if !found {
-                bail!("Task with ID starting with '{}' not found.", task_id);
+            if let Some(c) = &context
+                && !data.contexts.iter().any(|x| &x.id == c)
+            {
+                bail!("Context '{}' does not exist.", c);
             }
-
+            let task = data.tasks.iter_mut().find(|t| t.id == id).expect("resolved id exists");
+            if let Some(s) = status {
+                task.status = s;
+            }
+            if let Some(c) = context {
+                task.context_id = c;
+            }
+            task.updated_at = now();
+            let title = task.title.clone();
             storage.save(&data)?;
+            println!("Moved task '{title}'");
         }
         Commands::Delete { task_id } => {
-            let initial_len = data.tasks.len();
-            data.tasks.retain(|t| !t.id.to_string().starts_with(&task_id));
-            
-            if data.tasks.len() == initial_len {
-                bail!("Task with ID starting with '{}' not found.", task_id);
-            }
-
+            let id = resolve_prefix(&data.tasks, &task_id)?;
+            data.tasks.retain(|t| t.id != id);
             storage.save(&data)?;
             println!("Task deleted successfully.");
         }
@@ -293,10 +296,10 @@ fn main() -> Result<()> {
             let context = models::Context {
                 id: id.clone(),
                 name,
-                position: data.contexts.len() as i32 + 1,
+                position: Some((data.contexts.len() as i64 + 1).into()),
+                extra: Default::default(),
             };
 
-            println!("Adding context: {}", context.name);
             data.contexts.push(context);
             storage.save(&data)?;
             println!("Context '{}' added successfully.", id);
@@ -310,14 +313,15 @@ fn main() -> Result<()> {
             let column = models::Column {
                 id: id.clone(),
                 name,
-                position: data.columns.len() as i32 + 1,
+                position: Some((data.columns.len() as i64 + 1).into()),
+                extra: Default::default(),
             };
 
-            println!("Adding column: {}", column.name);
             data.columns.push(column);
             storage.save(&data)?;
             println!("Column '{}' added successfully.", id);
         }
+        Commands::Archive { command } => archive::run(&storage, &data, command)?,
     }
 
     Ok(())
