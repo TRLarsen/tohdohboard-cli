@@ -16,18 +16,29 @@ cargo install --path .
 
 *Make sure your cargo bin directory (usually `~/.cargo/bin`) is in your `$PATH`.*
 
-## Tailnet / Remote Usage
+## Remote Usage
 
-By default, the CLI looks for data in `~/.tohdohboard/data.json`. To use it from any machine on your Tailnet, point it to your backend server's API:
+By default, the CLI uses local files in `~/.tohdohboard/`. To use a server instead, set `TOHDOH_URL` to its `/api/data` URL (an empty `TOHDOH_URL` counts as unset):
 
 ```bash
-export TOHDOH_URL="http://<your-server-ip>:3001/api/data"
+export TOHDOH_URL="http://<your-server>:3001/api/data"
 tohdoh list
 ```
 
-Add this export to your `.bashrc` or `.zshrc` to make it permanent.
+Add the exports to your `.bashrc` or `.zshrc` to make them permanent.
 
-`TOHDOH_URL` is the full URL of `/api/data`. Other endpoints (the archive) are derived from it by replacing the trailing `/data`, so it must end in `/data`.
+`TOHDOH_URL` must end in `/data`: other endpoints (the archive) are derived from it by replacing that suffix. Requests time out after 10 s (connect) / 30 s (total).
+
+How the server authenticates you decides what else to set:
+
+* **Tailscale Serve** (private, tailnet only): Serve proxies to the backend on loopback and adds your identity header, so there is nothing to configure in the CLI. Just use the Serve URL:
+  `export TOHDOH_URL="https://<machine>.<tailnet>.ts.net/api/data"`
+* **Public / Tailscale Funnel** (reachable from the internet): the server runs in token mode and every request must carry a bearer token:
+  `export TOHDOH_TOKEN="<your access token>"`
+  The token is sent as `Authorization: Bearer <token>` and never printed. If the server answers `401` with a bearer challenge, the CLI tells you to set (or fix) `TOHDOH_TOKEN`. Prefer `https://` URLs whenever a token is used.
+* **Proxy-mode server, tagged devices and CI**: a server in proxy mode also accepts bearer tokens when `[auth.tokens]` is configured. Use this where Tailscale Serve sends no identity header (for example tagged devices): set `TOHDOH_TOKEN` as above.
+
+A `401` without a bearer challenge means the server expects its proxy to supply your identity: reach it through the proxy (for example `tailscale serve`) instead of directly. Redirects are never followed (they could silently drop a write); the error names the address to use. Trailing slashes in `TOHDOH_URL` are ignored; for archive commands it must not contain a query string.
 
 Without `TOHDOH_URL` everything is local: the board is `~/.tohdohboard/data.json` and the archive is `~/.tohdohboard/archive.json`, the same format the server uses, so a server pointed at that directory sees the same archive.
 

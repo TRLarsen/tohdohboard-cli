@@ -14,7 +14,8 @@
 //! * **Remote server**: set `TOHDOH_URL` to the backend's `/api/data` URL and
 //!   every command reads and writes the board over HTTP instead (archive
 //!   commands use the server's `/api/archive` endpoints, derived from that URL);
-//!   the local files are not used.
+//!   the local files are not used. `TOHDOH_TOKEN`, if set, is sent as a bearer
+//!   token.
 //!
 //! See [`storage`] for details.
 //!
@@ -72,6 +73,9 @@ use comfy_table::{Table, Color, Cell, Attribute};
 #[derive(Parser)]
 #[command(name = "tohdoh")]
 #[command(about = "A native Rust terminal task manager for TohdohBoard", long_about = None)]
+#[command(after_help = "Environment:\n  \
+    TOHDOH_URL    Use a remote board: the server's /api/data URL (default: local files in ~/.tohdohboard)\n  \
+    TOHDOH_TOKEN  Access token sent as `Authorization: Bearer` to the server (if it requires one)")]
 struct Cli {
     /// The subcommand to run.
     #[command(subcommand)]
