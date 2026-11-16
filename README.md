@@ -37,11 +37,27 @@ The binary will be located in `target/release/tohdoh`.
 
 ## Usage
 
+Contexts and columns are referred to by their **id** (e.g. `work`, `todo`), not by display name (`To Do`). The default board has contexts `work`, `school`, `projects` and columns `todo`, `doing`, `done`.
+
 * **Add a task**:
-  `tohdoh add "Title" --context work --status "To Do" "Description"`
+  `tohdoh add "Title" --context work --status todo "Description"`
+  (`--status` defaults to `todo`; the description is optional)
 * **List tasks**:
-  `tohdoh list`
+  `tohdoh list` (optionally `--context work` and/or `--status todo`)
 * **Move a task**:
-  `tohdoh move <TASK_ID_PREFIX> --status Done --context home`
+  `tohdoh move <TASK_ID_PREFIX> --status done --context projects`
+  (changes only the first task matching the prefix)
 * **Delete a task**:
   `tohdoh delete <TASK_ID_PREFIX>`
+  (deletes *every* task whose id starts with the prefix)
+* **Add a context / column**:
+  `tohdoh add-context "Side Projects"` / `tohdoh add-column "In Review"`
+  (ids are derived from the name: `side-projects`, `in-review`)
+
+## Documentation
+
+The source is documented with Rustdoc, including private items. To build and open it:
+
+```bash
+cargo doc --no-deps --document-private-items --open
+```
