@@ -27,6 +27,12 @@ tohdoh list
 
 Add this export to your `.bashrc` or `.zshrc` to make it permanent.
 
+`TOHDOH_URL` is the full URL of `/api/data`. Other endpoints (the archive) are derived from it by replacing the trailing `/data`, so it must end in `/data`.
+
+Without `TOHDOH_URL` everything is local: the board is `~/.tohdohboard/data.json` and the archive is `~/.tohdohboard/archive.json`, the same format the server uses, so a server pointed at that directory sees the same archive.
+
+Fields the CLI does not know about (added by other clients) are preserved when it saves.
+
 ## Building and Running Locally
 
 ```bash
@@ -46,10 +52,16 @@ Contexts and columns are referred to by their **id** (e.g. `work`, `todo`), not 
   `tohdoh list` (optionally `--context work` and/or `--status todo`)
 * **Move a task**:
   `tohdoh move <TASK_ID_PREFIX> --status done --context projects`
-  (changes only the first task matching the prefix)
 * **Delete a task**:
   `tohdoh delete <TASK_ID_PREFIX>`
-  (deletes *every* task whose id starts with the prefix)
+
+  An id prefix must match exactly one task: an empty or ambiguous prefix is an error that lists the candidates (`move`, `delete` and the `archive` commands all behave this way).
+* **Archive**:
+  `tohdoh archive done` archives every task in the `done` column (`--status <column>` and `--context <id>` narrow it),
+  `tohdoh archive add <TASK_ID_PREFIX>...` archives specific tasks,
+  `tohdoh archive list` shows the archive, `tohdoh archive restore <ID_PREFIX>...` brings tasks back.
+
+  Archived tasks are removed from the board, not deleted. The CLI only archives on request; archiving old done tasks *automatically* is the server's job (see `[archive]` in its `config.toml`), so no age thresholds are configured here.
 * **Add a context / column**:
   `tohdoh add-context "Side Projects"` / `tohdoh add-column "In Review"`
   (ids are derived from the name: `side-projects`, `in-review`)
