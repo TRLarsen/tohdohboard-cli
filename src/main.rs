@@ -31,6 +31,8 @@
 //! tohdoh add "Write report" --context work --status todo "First draft"
 //! tohdoh list --context work
 //! tohdoh move 1a2b3c4d --status doing
+//! tohdoh add "Pay rent" --context work --due 2026-12-01
+//! tohdoh due 1a2b3c4d 2026-12-05       # or `none` to clear
 //! tohdoh delete 1a2b3c4d
 //! tohdoh archive done                  # archive everything in the done column
 //! tohdoh archive list
@@ -104,12 +106,16 @@ enum Commands {
         /// Column id to put the task in (e.g. `todo`, `doing`, `done`)
         #[arg(long, default_value = "todo")]
         status: String,
+        /// Due date as YYYY-MM-DD (optional)
+        #[arg(long, value_parser = parse_due)]
+        due: Option<String>,
         /// Longer description (optional; stored empty if omitted)
         description: Option<String>,
     },
     /// List tasks
     ///
-    /// Prints a table of tasks (id prefix, title, context, status, last update),
+    /// Prints a table of tasks (id prefix, title, context, status, due date,
+    /// last update),
     /// sorted by context position and then column position. Tasks whose context
     /// or column is unknown count as position 0. Both filters take ids and may be combined.
     List {
@@ -148,6 +154,17 @@ enum Commands {
         /// Task id, or the beginning of it (the first 8 characters shown by `list` suffice)
         task_id: String,
     },
+    /// Set or clear a task's due date
+    ///
+    /// DATE is `YYYY-MM-DD`, or `none` to remove the due date. TASK_ID must
+    /// identify exactly one task.
+    Due {
+        /// Task id, or the beginning of it
+        task_id: String,
+        /// Due date (YYYY-MM-DD) or `none`
+        #[arg(value_parser = parse_due)]
+        date: String,
+    },
     /// Add a context (swimlane)
     ///
     /// The id is the name lowercased, trimmed, with spaces replaced by `-`
@@ -180,6 +197,19 @@ enum Commands {
     },
 }
 
+/// Checks a due date typed by the user: a real calendar date as `YYYY-MM-DD`
+/// (kept as typed), or `none` (any case, returned as `none`). Used by both
+/// `add --due` and `due`; dates already stored on tasks are never validated.
+fn parse_due(s: &str) -> Result<String, String> {
+    if s.eq_ignore_ascii_case("none") {
+        return Ok("none".into());
+    }
+    match chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        Ok(d) if d.to_string() == s => Ok(s.into()),
+        _ => Err(format!("'{s}' is not a valid date, expected YYYY-MM-DD (or `none`)")),
+    }
+}
+
 /// Entry point: parses the command line, loads the board, runs one command and
 /// saves the board if the command changed it.
 ///
@@ -198,7 +228,7 @@ fn main() -> Result<()> {
     let mut data = storage.load()?;
 
     match cli.command {
-        Commands::Add { title, context, status, description } => {
+        Commands::Add { title, context, status, due, description } => {
             if !data.contexts.iter().any(|c| c.id == context) {
                 bail!("Context '{}' does not exist.", context);
             }
@@ -214,6 +244,7 @@ fn main() -> Result<()> {
                 context_id: context.clone(),
                 created_at: now(),
                 updated_at: now(),
+                due_date: due.filter(|d| d != "none"),
                 extra: Default::default(),
             };
 
@@ -229,6 +260,7 @@ fn main() -> Result<()> {
                 Cell::new("Title").add_attribute(Attribute::Bold),
                 Cell::new("Context").add_attribute(Attribute::Bold).fg(Color::Green),
                 Cell::new("Status").add_attribute(Attribute::Bold).fg(Color::Yellow),
+                Cell::new("Due").add_attribute(Attribute::Bold).fg(Color::Magenta),
                 Cell::new("Updated").add_attribute(Attribute::Bold).fg(Color::DarkGrey),
             ]);
 
@@ -255,6 +287,7 @@ fn main() -> Result<()> {
                     task.title.clone(),
                     task.context_id.clone(),
                     task.status.clone(),
+                    task.due_date.clone().unwrap_or_default(),
                     short_time(&task.updated_at),
                 ]);
             }
@@ -284,6 +317,18 @@ fn main() -> Result<()> {
             let title = task.title.clone();
             storage.save(&data)?;
             println!("Moved task '{title}'");
+        }
+        Commands::Due { task_id, date } => {
+            let id = resolve_prefix(&data.tasks, &task_id)?;
+            let task = data.tasks.iter_mut().find(|t| t.id == id).expect("resolved id exists");
+            task.due_date = Some(date).filter(|d| d != "none");
+            task.updated_at = now();
+            let (title, due) = (task.title.clone(), task.due_date.clone());
+            storage.save(&data)?;
+            match due {
+                Some(d) => println!("Task '{title}' is due {d}"),
+                None => println!("Cleared due date of '{title}'"),
+            }
         }
         Commands::Delete { task_id } => {
             let id = resolve_prefix(&data.tasks, &task_id)?;
@@ -329,4 +374,18 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_due;
+
+    #[test]
+    fn due_input_is_strict_and_none_clears() {
+        assert_eq!(parse_due("2026-03-04").unwrap(), "2026-03-04");
+        assert_eq!(parse_due("NONE").unwrap(), "none");
+        for bad in ["", "2026-3-4", "2026-02-30", "tomorrow", "04/03/2026", "2026-03-04 "] {
+            assert!(parse_due(bad).is_err(), "{bad}");
+        }
+    }
 }
